@@ -17,7 +17,6 @@
   },
   "homepage": "https://github.com/seanjh/venmovac",
   "dependencies": {
-    "q": "^1.1.2",
-    "through": "^2.3.6"
+    "q": "^1.1.2"
   }
 }
