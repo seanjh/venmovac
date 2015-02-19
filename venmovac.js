@@ -1,15 +1,19 @@
+#!/usr/bin/env node
+
 var fs = require('fs');
 var Q = require('q');
 var async = require('async');
 var moment = require('moment');
-var vac = require('./vac');
+
+var program = require('./parse_args').parse(process.argv);
+var vac = require('./vacuum');
 var persist = require('./persist');
 
+var db = persist.getDB();
 var transQueue = [];
 var transMaster = {};
 var queueLimit = 200;
-var delayMS = 60000; // 10 seconds
-var db;
+var delayMS = 5000; // 5 seconds
 
 var writeJSONData = function (data) {
   var filename = moment().format('X') + '.json';
@@ -43,10 +47,11 @@ var printIds = function (data) {
 
 var saveTransactionsAsync = function(num, dataArray, callback) {
   var insertData;
-  if (num) {
-    insertData = dataArray.slice(dataArray.length - num, num);
-    persist.savePromise(db, insertData).then(function(){});
-    //printIds(insertData);
+  insertData = dataArray.slice(dataArray.length - num, dataArray.length);
+  if (num && insertData.length > 0) {
+    persist.insertPromise(insertData).then(function (records) {
+      console.log(moment().format() + ' Finished insert of ' + records.length + ' objects');
+    });
   }
   callback(null, insertData);
 };
@@ -55,9 +60,7 @@ var saveNewTransactions = function (num) {
   // Persist the new data
   var deferred = Q.defer();
     if (num > 0) {
-      // TODO: insert slice
       saveTransactionsAsync(num, transQueue, deferred.resolve);
-      console.log('DO INSERT');
     } else {
     deferred.resolve({});
   }
@@ -89,28 +92,40 @@ var trimQueueAndMaster = function (queue, limit, master, callback) {
 };
 
 var queueTransactions = function (data, db) {
-  console.log(moment().format() + ': Processing ' + data.length + ' total transactions.');
+  console.log(moment().format() + ' Processing ' + data.length + ' total transactions.');
   var oldQueueCount = transQueue.length;
   var newTranCount;
   checkTransMaster(data).then(function() {
     newTranCount = transQueue.length - oldQueueCount;
-    console.log(moment().format() + ': Located ' + newTranCount + ' new transactions.');
+    console.log(moment().format() + ' Located ' + newTranCount + ' new transactions.');
     return saveNewTransactions(newTranCount, db);
   }).then(function() {
     trimQueueAndMaster(transQueue, queueLimit, transMaster, function(){});
   });
-  console.log(moment().format() + ': Completed processing transactions.');
 };
 
-// TODO: get DB
-// http://mongodb.github.io/node-mongodb-native/1.4/driver-articles/mongoclient.html#the-url-connection-format
-setInterval(function () {
+var processAPI = function () {
   vac.vacuumPromise().then(function (data) {
-    console.log(moment().format() + ': Got response.');
+    // console.log(moment().format() + ': Got response.');
     //writeJSONData(data);
     var dataArray = data.data;
     queueTransactions(dataArray, db);
   }, function (error) {
     console.error('Error: ' + error);
   });
-}, delayMS);
+};
+
+var parse_cli = function parse_cli() {
+  url = 'mongodb://'.concat(
+    program.hostname,
+    ':'.concat(program.port),
+    '/'.concat(program.db)
+    );
+};
+
+parse_cli();
+persist.connect(url, function (err, db) {
+  if (err) throw new Error('Cannot connect to database');
+  processAPI();
+  setInterval(processAPI, delayMS);
+});

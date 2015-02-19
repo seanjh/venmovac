@@ -1,20 +1,12 @@
 var https = require('https');
-var http = require('http');
 var Q = require('q');
 
-//var defaultDest = 'https://venmo.com/api/v5/public';
-var defaultDest = 'http://127.0.0.1:8081/1423722113.json'
+var defaultDest = 'https://venmo.com/api/v5/public';
 
 var httpsGet = function (dest) {
    var deferred = Q.defer();
    https.get(dest || defaultDest, deferred.resolve);
    return deferred.promise;
-};
-
-var httpGet = function (dest) {
-  var deferred = Q.defer();
-  http.get(dest || defaultDest, deferred.resolve);
-  return deferred.promise;
 };
 
 var loadJSON = function (res) {
@@ -39,8 +31,8 @@ var loadJSON = function (res) {
 };
 
 exports.vacuumPromise = function (dest) {
-  return httpGet(dest).then(function (res) {
-  //return httpsGet(dest).then(function (res) {
+  // return httpGet(dest).then(function (res) {
+  return httpsGet(dest).then(function (res) {
     return loadJSON(res);
   });
 };
