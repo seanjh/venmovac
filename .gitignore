@@ -93,3 +93,6 @@ bower_components/
 
 # WebStorm
 .idea/
+
+# Sublime Text
+*.sublime*
