@@ -15,7 +15,7 @@ var transMaster = {};
 var queueLimit = 200;
 var delayMS = 5000; // 5 seconds
 
-var writeJSONData = function (data) {
+function writeJSONData(data) {
   var filename = moment().format('X') + '.json';
   fs.writeFile(filename, JSON.stringify(data, null, 2), function (err) {
       if (err) {
@@ -24,7 +24,7 @@ var writeJSONData = function (data) {
     });
 };
 
-var checkOneTransaction = function (tran, callback) {
+function checkOneTransaction(tran, callback) {
   if (tran && tran.payment_id && !transMaster[tran.payment_id]) {
     // This payment_id has not been seen recently
     transMaster[tran.payment_id] = true;
@@ -33,30 +33,49 @@ var checkOneTransaction = function (tran, callback) {
   callback();  // async-lib-style callback
 };
 
-var checkTransMaster = function (dataArray) {
+function checkTransMaster(dataArray) {
   var deferred = Q.defer();
   async.each(dataArray, checkOneTransaction, deferred.resolve);
   return deferred.promise;
 };
 
-var printIds = function (data) {
+function printIds(data) {
   for (var i=0; i<data.length; i++) {
     console.log('\t' + data[i].payment_id);
   }
 };
 
-var saveTransactionsAsync = function(num, dataArray, callback) {
+function logInsertIds(record, callback) {
+  if (record && record._id && record.permalink) {
+    console.log('\t' + record.permalink + ' inserted with _id ' + record._id);
+    callback(null);
+  } else {
+    if (!record._id)
+      callback("Missing mongodb _id");
+    if (!record.permalink)
+      callback("Missing venmo permalink");
+    if (!record)
+      callback("Record is malformed");
+  }
+}
+
+function handleInsertLogError(err) {
+  if (err) console.error(err);
+}
+
+function saveTransactionsAsync(num, dataArray, callback) {
   var insertData;
   insertData = dataArray.slice(dataArray.length - num, dataArray.length);
   if (num && insertData.length > 0) {
     persist.insertPromise(insertData).then(function (records) {
       console.log(moment().format() + ' Finished insert of ' + records.length + ' objects');
+      async.each(records, logInsertIds,handleInsertLogError);
     });
   }
   callback(null, insertData);
 };
 
-var saveNewTransactions = function (num) {
+function saveNewTransactions(num) {
   // Persist the new data
   var deferred = Q.defer();
     if (num > 0) {
@@ -67,7 +86,7 @@ var saveNewTransactions = function (num) {
   return deferred.promise;
 };
 
-var trimMaster = function (queue, limit, master, trimCount, callback) {
+function trimMaster(queue, limit, master, trimCount, callback) {
   // Trim transaction queue to below limit if necessary
   var transToTrash;
   if (queue.length > limit) {
@@ -80,7 +99,7 @@ var trimMaster = function (queue, limit, master, trimCount, callback) {
   }
 };
 
-var trimQueueAndMaster = function (queue, limit, master, callback) {
+function trimQueueAndMaster(queue, limit, master, callback) {
   var trimCount;
   if (queue.length > limit) {
     trimCount = queue.length - limit;
@@ -91,7 +110,7 @@ var trimQueueAndMaster = function (queue, limit, master, callback) {
   callback(null);
 };
 
-var queueTransactions = function (data, db) {
+function queueTransactions(data, db) {
   console.log(moment().format() + ' Processing ' + data.length + ' total transactions.');
   var oldQueueCount = transQueue.length;
   var newTranCount;
@@ -104,7 +123,7 @@ var queueTransactions = function (data, db) {
   });
 };
 
-var processAPI = function () {
+function processAPI() {
   vac.vacuumPromise().then(function (data) {
     // console.log(moment().format() + ': Got response.');
     //writeJSONData(data);
@@ -115,7 +134,7 @@ var processAPI = function () {
   });
 };
 
-var parse_cli = function parse_cli() {
+function parse_cli() {
   url = 'mongodb://'.concat(
     program.hostname,
     ':'.concat(program.port),

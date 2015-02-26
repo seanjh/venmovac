@@ -6,7 +6,11 @@ VenmoVac requires a running MongoDB server to operate. The remaining dependencie
 
     npm install
 
-It is recommended that VenmoVac be launched with [forever](https://github.com/foreverjs/forever "foreverjs/forever").
+It is recommended that VenmoVac be launched with [pm2](https://github.com/Unitech/pm2 "Unitech/PM2").
+
+    npm install -g pm2
+
+    pm2 start ./venmovac.js
 
 ## Usage
 

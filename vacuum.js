@@ -31,7 +31,6 @@ var loadJSON = function (res) {
 };
 
 exports.vacuumPromise = function (dest) {
-  // return httpGet(dest).then(function (res) {
   return httpsGet(dest).then(function (res) {
     return loadJSON(res);
   });
