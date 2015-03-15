@@ -12,7 +12,7 @@ db.trans.aggregate([
   { $out: "agg_user_tran_counts" }
 ]);
 
-db.user_tran_counts_agg.aggregate([
+db.agg_user_tran_counts.aggregate([
   { $sort: { count: -1, _id: 1 }},
   { $limit: 100 }
 ]);
