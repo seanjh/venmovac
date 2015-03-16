@@ -19,7 +19,7 @@ var wcReduce = function (wordKey, wordValues) {
 db.trans.mapReduce(
   wcMap,
   wcReduce,
-  { out: {merge: "message_word_count"} }
+  { out: {merge: "mr_message_word_count"} }
 );
 
 // Get top 100 words
