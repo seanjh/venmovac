@@ -96,3 +96,5 @@ bower_components/
 
 # Sublime Text
 *.sublime*
+
+*.xml.gz*
