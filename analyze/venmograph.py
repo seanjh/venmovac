@@ -116,16 +116,18 @@ def build_graph_networkx(cursor):
 def build_new_graph_gt(results_iter):
     graph = gt.Graph(directed=False)
 
-    v_extern_id = graph.new_vertex_property('int64_t')
-    v_intern_id = graph.new_vertex_property('int64_t')
+    graph.vertex_properties['external_id'] = graph.new_vertex_property('int64_t')
+    graph.vertex_properties['internal_id'] = graph.new_vertex_property('int64_t')
+    graph.vertex_properties['username'] = graph.new_vertex_property('string')
+    graph.edge_properties['transactions'] = graph.new_edge_property('int')
 
     users = {}
 
     for result in results_iter:
         u1, u2 = get_users(result)
-        v1 = get_vertex_gt(users, u1, graph, v_extern_id, v_intern_id)
-        v2 = get_vertex_gt(users, u2, graph, v_extern_id, v_intern_id)
-        e = graph.add_edge(v1, v2)
+        v1 = get_vertex_gt(users, u1, graph)
+        v2 = get_vertex_gt(users, u2, graph)
+        e = set_edge_gt(v1, v2, graph)
 
     return graph
 
@@ -135,15 +137,31 @@ def load_graph_file(filename):
     graph.set_directed(False)
     return graph
 
-def get_vertex_gt(users, one_user, gt_graph, v_extern_id, v_intern_id):
+def get_vertex_gt(users, one_user, graph):
     key = one_user.external_id
     vertex = users.get(key)
     if not vertex:
-        vertex = gt_graph.add_vertex()
-        v_extern_id[vertex] = one_user.external_id
-        v_intern_id[vertex] = one_user.internal_id
+        vertex = graph.add_vertex()
+        graph.vp['external_id'][vertex] = one_user.external_id
+        graph.vp['internal_id'][vertex] = one_user.internal_id
+        graph.vp['username'][vertex] = one_user.username
         users[key] = vertex
     return vertex
+
+def set_edge_gt(vertex_1, vertex_2, graph):
+    edge_set_1 = set(vertex_1.all_edges())
+    edge_set_2 = set(vertex_2.all_edges())
+    common_edges = edge_set_1.intersection(edge_set_2)
+    edge = None
+    if not common_edges:
+        edge = graph.add_edge(vertex_1, vertex_2)
+        # Initialize the transactions value (i.e., edge weight)
+        graph.ep['transactions'][edge] = 1
+    else:
+        edge = common_edges.pop()
+        # Increment the transactions value (i.e., edge weight)
+        graph.ep['transactions'][edge] += 1
+    return edge
 
 def subgraph_from_mst(graph, mst):
     filtered = gt.GraphView(graph, efilt=mst, directed=False)
@@ -165,29 +183,87 @@ def subgraph_from_mst(graph, mst):
     return filtered
 
 
-def get_largest_subgraph(graph):
+class VenmoVisitor(gt.BFSVisitor):
+    def __init__(self, visited, vfilt, efilt, vertices=0, edges=0):
+        self.visited = visited
+        self.vfilt = vfilt
+        self.efilt = efilt
+        self.vertex_count = vertices
+        self.edge_count = edges
+
+    def examine_vertex(self, u):
+        self.visited[u] = True
+        self.vfilt[u] = True
+        self.vertex_count += 1
+
+    def examine_edge(self, e):
+        self.efilt[e] = True
+        self.edge_count += 1
+
+
+def bfs_ft(graph, vertex):
+    vertex_filter = graph.new_vertex_property('bool')
+    edge_filter = graph.new_edge_property('bool')
+    visitor = VenmoVisitor(graph.vp["visited"], vertex_filter, edge_filter)
+    gt.bfs_search(graph, vertex, visitor)
+    return visitor.vfilt, visitor.efilt, visitor.vertex_count, visitor.edge_count
+
+
+def get_largest_subgraph_mst(graph):
     min_span_tree = None
     filtered = None
-    edge_count = 0
     max_subgraph = None
-    max_edge_count = 0
+    vcount = 0
+    max_vcount = 0
     seen_vertices = set()
 
     for vertex in graph.vertices():
         if vertex not in seen_vertices:
-            print('Generating MST for %s.' % vertex, end='')
+            print('Finding MST from %s. ' % vertex, end='')
             min_span_tree = gt.min_spanning_tree(graph, root=vertex)
             filtered = subgraph_from_mst(graph, min_span_tree)
             seen_vertices = seen_vertices.union(filtered.vertices())
-            edge_count = np.count_nonzero(min_span_tree.get_array())
-            print(" MST has %d edges%s" % (edge_count, "           \r"), end='')
-            if edge_count > max_edge_count:
-                max_edge_count = edge_count
-                max_subgraph = filtered
+            # edge_count = np.count_nonzero(min_span_tree.get_array())
+            print(" MST saw %d vertices and %d edges                      \r" % (filtered.num_vertices(), filtered.num_edges()), end='')
+            if filtered.num_vertices() > max_vcount:
+                max_vcount = filtered.num_vertices()
+                max_subgraph = subgraph_from_mst(graph, min_span_tree)
+                print("New maximal subgraph with %d vertices and %d edges\n" % (
+                    max_subgraph.num_vertices(), max_subgraph.num_edges()
+                ))
         else:
             pass
-            # print('Skipping %s' % vertex)
-    print()
+
+    print('Original graph includes %d total vertices and %d total edges' % (
+        graph.num_vertices(), graph.num_edges())
+    )
+    print(('Edge & Vertex filtered graph includes %d total vertices and '
+        '%d total edges') % (
+        max_subgraph.num_vertices(), max_subgraph.num_edges()
+    ))
+
+    return max_subgraph
+
+
+def get_largest_subgraph_bfs(graph):
+    max_subgraph = None
+    max_vcount = 0
+
+    graph.vertex_properties["visited"] = graph.new_vertex_property('bool')
+    for vertex in graph.vertices():
+        if not graph.vp["visited"][vertex]:
+            graph.vp["visited"][vertex] = True
+            print('Conducting BFS from %s. ' % vertex, end='')
+            vfilt, efilt, vcount, ecount = bfs_ft(graph, vertex)
+            print(" BFS saw %d vertices and %d edges                \r" % (vcount, ecount), end='')
+            if vcount > max_vcount:
+                max_vcount = vcount
+                max_subgraph = gt.GraphView(graph, vfilt=vfilt, efilt=efilt, directed=False)
+                print("New maximal subgraph with %d vertices and %d edges\n" % (
+                    max_subgraph.num_vertices(), max_subgraph.num_edges()
+                ))
+        else:
+            pass
 
     print('Original graph includes %d total vertices and %d total edges' % (
         graph.num_vertices(), graph.num_edges())
@@ -230,8 +306,13 @@ def main():
 
     print("Graph has %d vertices and %d edges" % (graph.num_vertices(), graph.num_edges()))
 
-    filtered = get_largest_subgraph(graph)
-    outfile = os.path.join(os.path.expanduser("~"), 'graph-draw.pdf')
+    graph.save("full_graph.xml.gz")
+
+    # filtered = get_largest_subgraph_bfs(graph)
+    filtered = get_largest_subgraph_mst(graph)
+    filtered.save("filtered_graph.xml.gz")
+    # outfile = os.path.join(os.path.expanduser("~"), 'graph-draw.pdf')
+    outfile = 'venmo.pdf'
     draw_sfdp_graph(filtered, outfile)
 
 if __name__ == '__main__':
