@@ -9,7 +9,7 @@ import graph_tool.all as gt
 import numpy as np
 
 parser = argparse.ArgumentParser(description='Venmo Social Graphing')
-parser.add_argument('--infile', desc='Load graph-tool graph from file')
+parser.add_argument('--infile', help='Load graph-tool graph from file')
 
 
 class VenmoUser(object):
@@ -47,9 +47,9 @@ class VenmoUser(object):
 
     def __str__(self):
         return "VenmoUser %s (%d, %d)" % (
+            self.username,
             self._external_id,
-            self._internal_id,
-            self.username
+            self._internal_id
         )
 
 
@@ -81,9 +81,11 @@ def get_users(document):
 
 
 def get_transactions_cursor():
-    search_terms = ['rent', 'bills', 'utilities']
+    search_terms = [
+        'rent', 'bills', 'utilities', 'bill', 'water', 'cable', 'internet'
+    ]
     pipeline = [
-        {"$match": {"$text": {"$search": ' '.join(search_terms)}}},
+        # {"$match": {"$text": {"$search": ' '.join(search_terms)}}},
         {"$match": {"actor.external_id": { "$exists": True }}},
         {"$match": {"transactions.0.target.external_id": {"$exists": True }}},
         {"$unwind": "$transactions"},
@@ -96,7 +98,6 @@ def get_transactions_cursor():
     ]
 
     cursor = trans_collection.aggregate(pipeline)
-    # print cursor
 
     pairs_collection = db['tmp_transaction_pairs']
     cursor = pairs_collection.find()
@@ -145,7 +146,7 @@ def get_vertex_gt(users, one_user, gt_graph, v_extern_id, v_intern_id):
     return vertex
 
 def subgraph_from_mst(graph, mst):
-    filtered = GraphView(graph, efilt=mst, directed=False)
+    filtered = gt.GraphView(graph, efilt=mst, directed=False)
 
     v_filter = filtered.new_vertex_property('bool')
     for edge in filtered.edges():
@@ -159,7 +160,7 @@ def subgraph_from_mst(graph, mst):
         for vertex in target.all_neighbours():
             v_filter[vertex] = 1
 
-    graph.set_vertex_filter(v_filter)
+    filtered.set_vertex_filter(v_filter)
 
     return filtered
 
@@ -167,23 +168,26 @@ def subgraph_from_mst(graph, mst):
 def get_largest_subgraph(graph):
     min_span_tree = None
     filtered = None
-    vertex_count = 0
+    edge_count = 0
     max_subgraph = None
-    max_vertex_count = 0
+    max_edge_count = 0
     seen_vertices = set()
 
     for vertex in graph.vertices():
         if vertex not in seen_vertices:
-            print('Generating MST for %s' % vertex)
+            print('Generating MST for %s.' % vertex, end='')
             min_span_tree = gt.min_spanning_tree(graph, root=vertex)
             filtered = subgraph_from_mst(graph, min_span_tree)
             seen_vertices = seen_vertices.union(filtered.vertices())
-            vertex_count = np.count_nonzero(min_span_tree.get_array())
-            if vertex_count > max_vertex_count:
-                max_vertex_count = vertex_count
+            edge_count = np.count_nonzero(min_span_tree.get_array())
+            print(" MST has %d edges%s" % (edge_count, "           \r"), end='')
+            if edge_count > max_edge_count:
+                max_edge_count = edge_count
                 max_subgraph = filtered
         else:
-            print('Skipping %s' % vertex)
+            pass
+            # print('Skipping %s' % vertex)
+    print()
 
     print('Original graph includes %d total vertices and %d total edges' % (
         graph.num_vertices(), graph.num_edges())
@@ -198,12 +202,12 @@ def get_largest_subgraph(graph):
 
 def draw_sfdp_graph(graph, filename):
     x = raw_input("Press enter to save graph to %s..." % filename)
-    pos = gt.sfdp_layout(filtered)
-    bv, be = gt.betweenness(filtered)
+    pos = gt.sfdp_layout(graph)
+    bv, be = gt.betweenness(graph)
     be.a /= be.a.max() / 5
-    deg = filtered.degree_property_map("total")
+    deg = graph.degree_property_map("total")
     gt.graph_draw(
-        filtered,
+        graph,
         pos=pos,
         vertex_fill_color=bv,
         edge_pen_width=be,
@@ -223,6 +227,8 @@ def main():
         print("Loading graph from database")
         cursor = get_transactions_cursor()
         graph = build_new_graph_gt(cursor)
+
+    print("Graph has %d vertices and %d edges" % (graph.num_vertices(), graph.num_edges()))
 
     filtered = get_largest_subgraph(graph)
     outfile = os.path.join(os.path.expanduser("~"), 'graph-draw.pdf')
