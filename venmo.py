@@ -5,19 +5,18 @@ import datetime
 
 CLIENT = pymongo.MongoClient('localhost', 27017)
 DB = CLIENT['venmo']
-venmoWordContainer = {}
 
 
 def parse_words():
-    global venmoWordContainer
+    venmoWordContainer = {}
     collection = DB['trans']
-    collection_size = collection.count()
-    print 'Processing:\t', collection.count(), ' documents'
+    collection_size = 1000000
+    print 'Processing:\t', collection_size, ' documents'
     print "*"*50
 
     # count the words
     count = 1
-    for doc in collection.find():
+    for doc in collection.find()[:1000000]:
         text = nltk.tokenize.word_tokenize(doc['message'])
         tokenized = nltk.pos_tag(text)
         nouns = [s[0] for s in tokenized if s[1] == 'NN']
@@ -29,7 +28,7 @@ def parse_words():
 
         # Progress tracker
         count += 1
-        if ((1.0 * count) / collection_size) * 100 % 10 == 0:
+        if ((1.0 * count) / collection_size) * 100 % 1 == 0:
             print str(((1.0 * count) / collection_size) * 100) + "%"
 
     # write to a file
@@ -39,7 +38,6 @@ def parse_words():
 def write_to_file(d):
     with open("venmoWords.csv", "w") as r:
         for k, v in d.items():
-            print k, "\t", v
             r.write(normalizeText(k) + "," + str(v) + "\n")
 
 
