@@ -1,5 +1,6 @@
 import pymongo
 import nltk
+import datetime
 
 
 CLIENT = pymongo.MongoClient('localhost', 27017)
@@ -10,12 +11,13 @@ venmoWordContainer = {}
 def parse_words():
     global venmoWordContainer
     collection = DB['trans']
-
+    collection_size = collection.count()
     print 'Processing:\t', collection.count(), ' documents'
     print "*"*50
 
     # count the words
-    for doc in collection.find()[:100]:
+    count = 1
+    for doc in collection.find():
         text = nltk.tokenize.word_tokenize(doc['message'])
         tokenized = nltk.pos_tag(text)
         nouns = [s[0] for s in tokenized if s[1] == 'NN']
@@ -23,7 +25,12 @@ def parse_words():
             if n not in venmoWordContainer:
                 venmoWordContainer[n] = 1
             else:
-                venmoWordContainer[n] += venmoWordContainer[n]
+                venmoWordContainer[n] += 1
+
+        # Progress tracker
+        count += 1
+        if ((1.0 * count) / collection_size) * 100 % 10 == 0:
+            print str(((1.0 * count) / collection_size) * 100) + "%"
 
     # write to a file
     write_to_file(venmoWordContainer)
@@ -44,4 +51,7 @@ def normalizeText(s):
 
 
 if __name__ == '__main__':
+    tic = datetime.datetime.now()
     parse_words()
+    toc = datetime.datetime.now()
+    print toc - tic
