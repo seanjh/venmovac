@@ -4,7 +4,7 @@ import pymongo
 import time
 from math import *
 
-access_token = "2872120.d11e0d7.1d704bcbdca4422d83a477bbbb198891"
+access_token = ""
 api = InstagramAPI(access_token=access_token)
 
 CLIENT = pymongo.MongoClient('localhost', 27017)
