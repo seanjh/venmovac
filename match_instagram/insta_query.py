@@ -1,3 +1,4 @@
+import sys
 import time
 import argparse
 
@@ -6,7 +7,27 @@ from instagram.bind import InstagramAPIError
 import pymongo
 
 parser = argparse.ArgumentParser()
-parser.add_argument('tokens', nargs='*')
+parser.add_argument('tokens',
+    nargs='+',
+    help='Instagram OAuth access tokens'
+)
+parser.add_argument('-rv',
+    action='store_true',
+    dest='redo_venmo_heavies',
+    help='Repopulate heavy Venmo users data from Venmo transactions'
+)
+parser.add_argument('-ri',
+    action='store_true',
+    dest='redo_instagram_matches',
+    help='Repopulate venmo_instagram matches collection from scratch (overwrites any existing matches)'
+)
+parser.add_argument('-t', '--targets',
+    dest='targets',
+    type=int,
+    default=30,
+    help='Threshold number of Venmo target users for heavy users'
+)
+
 args = parser.parse_args()
 
 access_tokens = []
@@ -63,9 +84,10 @@ def match_venmo_instagram(user_pairs):
 
 def populate_user_pairs_collection(source_collection):
     print '------RE-POPULATING MONGODB COLLECTION user_pairs------'
+    start = time.time()
 
     USER_PAIRS_COLLECTION.drop()
-    print 'Dropped existing user_pairs collection'
+    print 'Dropped existing user_pairs collection. Completed in %f seconds.' % (time.time() - start)
 
     pipeline = [
         {"$match": {"actor.external_id": { "$exists": True }}},
@@ -77,9 +99,10 @@ def populate_user_pairs_collection(source_collection):
         }},
         {"$out": "user_pairs"}
     ]
+    start = time.time()
 
     result = source_collection.aggregate(pipeline, allowDiskUse=True)
-    print 'Completed aggregate query of trans collection'
+    print 'Completed aggregate query of trans collection. Completed in %f seconds.' % (time.time() - start)
 
 
 def get_networked_users(source_collection, limit=20, populate=True):
@@ -100,8 +123,10 @@ def get_networked_users(source_collection, limit=20, populate=True):
         }},
         {"$sort": {"total_targets": -1}}
     ]
+
+    start = time.time()
     cursor = USER_PAIRS_COLLECTION.aggregate(pipeline)
-    print 'Completed aggregate query of user_pairs collection'
+    print 'Completed aggregate query of user_pairs collection. Completed in %f seconds.' % (time.time() - start)
 
     print
     heavy_users = []
@@ -133,6 +158,21 @@ def instagram_user_string(instagram_user):
         instagram_user.username,
         instagram_user.id
     )
+
+
+def existing_venmo_instagram_matches(venmo_users):
+    print '------FINDING EXISTING VENMO INSTAGRAM USER MATCHES------'
+
+    start = time.time()
+
+    venmo_ids = [int(user.get('id')) for user in venmo_users]
+
+    results = VENMO_INSTAGRAM_MATCHES.find({
+        "_id": {"$in": venmo_ids}
+    })
+
+    print 'Completed finding existing venmo-instagram matches in %f seconds.' % (time.time() - start)
+    return [match.get('venmo') for match in results]
 
 
 def instagram_users_query(firstname, lastname):
@@ -172,9 +212,8 @@ def friend_match_ratio(instagram_user, targets):
                     # Couldn't match instagram following user to venmo targets user
                     pass
         except InstagramAPIError as e:
-            print '\tInstagramAPIError: Could not fetch followers for Instagram user %s -- %s' % (
-                instagram_user.username, e
-            )
+            if (e.status_code == 400):
+                print "\Instagram user %s -- %s is set to private." % (instagram_user.username, instagram_user.id)
             return -1.0, matches
 
     print '\tInstagram username %s (%s) matched %d Instagram followers to %d Venmo targets -- %0.3f%%' % (
@@ -247,7 +286,7 @@ def get_one_instagram_user(venmo_user, targets, save=True):
     instagram_match = None
     if max_index is not None:
         instagram_match = instagram_results[max_index]
-        print '\BEST MATCH'
+        print 'BEST MATCH LOCATED'
         print '\tVenmo:     %s (full_name=%s)' % (venmo_user['username'], venmo_user['name'])
         print '\tInstagram: %s (full_name=%s, id=%s)' % (instagram_match.username, instagram_match.full_name, instagram_match.id)
     else:
@@ -297,7 +336,26 @@ def save_user_match(venmo_user, instagram_user, user_type='actor', actor_id=None
 
 def main():
 
-    heavy_users = get_networked_users(TRANS_COLLECTION, limit=30, populate=True)
+    heavy_users = get_networked_users(
+        TRANS_COLLECTION,
+        limit=args.targets,
+        populate=args.redo_venmo_heavies
+    )
+
+    if not args.redo_instagram_matches:
+        filtered_heavy_users = []
+        existing_matched_users = existing_venmo_instagram_matches(
+            [user.get('_id') for user in heavy_users]
+        )
+        existing_matched_venmo_ids = [user.get('id') for user in existing_matched_users]
+
+        for doc in heavy_users:
+            heavy_user = doc.get('_id')
+            if heavy_user.get('id') not in existing_matched_venmo_ids:
+                filtered_heavy_users.append(doc)
+
+        heavy_users = filtered_heavy_users
+
     match_venmo_instagram(heavy_users)
 
 

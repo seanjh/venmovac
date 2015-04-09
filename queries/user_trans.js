@@ -7,6 +7,7 @@ db.trans.aggregate([
     "actor.id": 1,
     "transactions.target.username": 1,
     "transactions.target.id": 1,
+    "transactions.message": 1,
     "created_time": 1,
     "updated_time": 1
   }},
