@@ -48,8 +48,8 @@ DB = CLIENT['venmo']
 
 TRANS_COLLECTION = DB['trans']
 USER_PAIRS_COLLECTION = DB['user_pairs']
-VENMO_USERS_COLLECTION = DB['venmo_users']
-VENMO_USERS_COLLECTION.create_index("venmo_id")
+VENMO_INSTAGRAM_MATCHES = DB['venmo_instagram']
+VENMO_INSTAGRAM_MATCHES.create_index("venmo_id")
 
 VENMO_IDS_SET = set()
 
@@ -104,7 +104,7 @@ def get_networked_users(trans_collection, limit=20, populate=True):
     for result in cursor:
         if result.get('_id') and result['_id'].get('username'):
             pairs = get_pairs_for_user(result.get('_id'))
-            print '%s Targets: %d' % (
+            print 'Venmo user %s has transated with %d other unique Venmo users' % (
                 result['_id'].get('username'),
                 len(pairs.get('targets')) if pairs.get('targets') else -1
             )
@@ -239,7 +239,7 @@ def get_one_instagram_user(venmo_user, targets, save=True):
         print '\tInstagram: %s (full_name=%s, id=%s)' % (instagram_match.username, instagram_match.full_name, instagram_match.id)
     else:
         print '\tNO MATCH on Instagram for Venmo user %s (%s)' % (venmo_user['username'], venmo_user['name'])
-        print ratios
+        # print ratios
 
     if save and instagram_match:
         saveUser(venmo_user, instagram_match)
@@ -262,7 +262,7 @@ def saveUser(target, instagram_results):
             for result in instagram_results:
                 venmo_user_tmp["instagram_users"].append({"insta_fullname": result.full_name, "insta_id": result.id})
             # if venmousers.find_one({"venmo_id":"venmo_id"}):
-            VENMO_USERS_COLLECTION.save(venmo_user_tmp)
+            VENMO_INSTAGRAM_MATCHES.save(venmo_user_tmp)
             venmo_user_tmp = {"venmo_id": "", "venmo_firstname": "", "venmo_lastname": "", "instagram_users": []}
     except TypeError:
         print "Found a TypeError"
