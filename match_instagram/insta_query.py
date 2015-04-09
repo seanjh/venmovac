@@ -247,58 +247,59 @@ def get_one_instagram_user(venmo_user, targets, save=True):
     instagram_match = None
     if max_index is not None:
         instagram_match = instagram_results[max_index]
-        print '\tBEST MATCH'
+        print '\BEST MATCH'
         print '\tVenmo:     %s (full_name=%s)' % (venmo_user['username'], venmo_user['name'])
         print '\tInstagram: %s (full_name=%s, id=%s)' % (instagram_match.username, instagram_match.full_name, instagram_match.id)
     else:
-        print '\tNO MATCH on Instagram for Venmo user %s (%s)' % (venmo_user['username'], venmo_user['name'])
+        print 'NO MATCH on Instagram for Venmo user %s (%s)' % (venmo_user['username'], venmo_user['name'])
         # print ratios
 
     if save and instagram_match:
-        print 'SAVING actor %s %s' % (venmo_user, instagram_match)
+        # print 'SAVING actor %s %s' % (venmo_user, instagram_match)
         save_user_match(venmo_user, instagram_match)
         for match in matches[max_index]:
-            print 'SAVING target %s' % match
-            save_user_match(match.get('venmo'), match.get('instagram'), user_type='target')
+            # print 'SAVING target %s' % match
+            save_user_match(
+                match.get('venmo'),
+                match.get('instagram'),
+                user_type='target',
+                actor_id=venmo_user.get('id')
+
+            )
 
 
 def get_instagram_user_dict(user):
+    attributes = ["username", "id", "full_name", "profile_picture", "bio", "website"]
     user_dict = {}
-    if hasattr(user, "username"):
-        user_dict["username"] = user.username
-    if hasattr(user, "id"):
-        user_dict["id"] = user.id
-    if hasattr(user, "full_name"):
-        user_dict["full_name"] = user.full_name
-    if hasattr(user, "profile_picture"):
-        user_dict["profile_picture"] = user.profile_picture
-    if hasattr(user, "bio"):
-        user_dict["bio"] = user.bio
-    if hasattr(user, "website"):
-        user_dict["website"] = user.website
+    for attrib in attributes:
+        if hasattr(user, attrib):
+            user_dict[attrib] = getattr(user, attrib)
     return user_dict
 
 
-def save_user_match(venmo_user, instagram_user, user_type='actor'):
-    venmo_id = venmo_user['id']
+def save_user_match(venmo_user, instagram_user, user_type='actor', actor_id=None):
+    venmo_id = int(venmo_user['id'])
+
+    document = {
+        "_id":          venmo_id,
+        "venmo":        venmo_user,
+        "instagram":    get_instagram_user_dict(instagram_user),
+        "user_type":    user_type
+    }
+
+    if actor_id:
+        document["actor_id"] = actor_id
 
     if venmo_id not in VENMO_IDS_SET:
             VENMO_IDS_SET.add(venmo_id)
-
-            VENMO_INSTAGRAM_MATCHES.save({
-                "_id":          venmo_id,
-                "venmo":        venmo_user,
-                "instagram":    get_instagram_user_dict(instagram_user),
-                "user_type":    user_type
-            })
+            VENMO_INSTAGRAM_MATCHES.save(document)
 
 
 def main():
-    heavy_users = get_networked_users(TRANS_COLLECTION, limit=30, populate=False)
+
+    heavy_users = get_networked_users(TRANS_COLLECTION, limit=30, populate=True)
     match_venmo_instagram(heavy_users)
 
 
 if __name__ == '__main__':
     main()
-
-
