@@ -61,8 +61,11 @@ def match_venmo_instagram(user_pairs):
         get_one_instagram_user(user, targets)
 
 
-def populate_user_pairs_collection(trans_collection):
+def populate_user_pairs_collection(source_collection):
     print '------RE-POPULATING MONGODB COLLECTION user_pairs------'
+
+    USER_PAIRS_COLLECTION.drop()
+    print 'Dropped existing user_pairs collection'
 
     pipeline = [
         {"$match": {"actor.external_id": { "$exists": True }}},
@@ -75,14 +78,13 @@ def populate_user_pairs_collection(trans_collection):
         {"$out": "user_pairs"}
     ]
 
-    result = trans_collection.aggregate(pipeline, allowDiskUse=True)
-    print result
-    print "DONE populate_user_pairs_collection"
+    result = source_collection.aggregate(pipeline, allowDiskUse=True)
+    print 'Completed aggregate query of trans collection'
 
 
-def get_networked_users(trans_collection, limit=20, populate=True):
+def get_networked_users(source_collection, limit=20, populate=True):
     if populate:
-        populate_user_pairs_collection(trans_collection)
+        populate_user_pairs_collection(source_collection)
 
     print '------FINDING VENMO USERS WITH >%d TARGET USERS------' % limit
 
@@ -99,12 +101,14 @@ def get_networked_users(trans_collection, limit=20, populate=True):
         {"$sort": {"total_targets": -1}}
     ]
     cursor = USER_PAIRS_COLLECTION.aggregate(pipeline)
+    print 'Completed aggregate query of user_pairs collection'
 
+    print
     heavy_users = []
     for result in cursor:
         if result.get('_id') and result['_id'].get('username'):
             pairs = get_pairs_for_user(result.get('_id'))
-            print 'Venmo user %s has transated with %d other unique Venmo users' % (
+            print 'Venmo user %s transacted with %d other users' % (
                 result['_id'].get('username'),
                 len(pairs.get('targets')) if pairs.get('targets') else -1
             )
@@ -148,36 +152,42 @@ def get_all_instagram_following(instagram_id):
     return following
 
 
-def friend_match_ratio(user, targets):
+def friend_match_ratio(instagram_user, targets):
     following = []
     match_count = 0
-    user_id = user.id
+    matches = list()
+    user_id = instagram_user.id
     if user_id:
         try:
             following = get_all_instagram_following(user_id)
-            for i, f_user in enumerate(following):
-                if is_instagram_user_venmo_target(f_user, targets):
+            for i, following_user in enumerate(following):
+                venmo_target_match = instagram_user_venmo_target(following_user, targets)
+                if venmo_target_match:
                     match_count += 1
+                    matches.append({
+                        "venmo": venmo_target_match,
+                        "instagram": following_user
+                    })
                 else:
                     # Couldn't match instagram following user to venmo targets user
                     pass
         except InstagramAPIError as e:
             print '\tInstagramAPIError: Could not fetch followers for Instagram user %s -- %s' % (
-                user.username, e
+                instagram_user.username, e
             )
-            return -1.0
+            return -1.0, matches
 
     print '\tInstagram username %s (%s) matched %d Instagram followers to %d Venmo targets -- %0.3f%%' % (
-        user.username, user.full_name, len(following), match_count,
+        instagram_user.username, instagram_user.full_name, len(following), match_count,
         float(match_count) / len(following) * 100 if len(following) > 0 else 0.0
     )
     if len(following) > 0:
-        return float(match_count) / len(following)
+        return float(len(matches)) / len(following), matches
     else:
-        return 0.0
+        return 0.0, matches
 
 
-def is_instagram_user_venmo_target(instagram_user, venmo_users):
+def instagram_user_venmo_target(instagram_user, venmo_users):
     # Just grab 2 pieces of the Instagram full_name (split on whitespace)
     i_name_parts = instagram_user.full_name.lower().split(None, 2)
 
@@ -195,8 +205,8 @@ def is_instagram_user_venmo_target(instagram_user, venmo_users):
                 instagram_user.username,
                 instagram_user.id
             )
-            return True
-    return False
+            return v_user
+    return None
 
 
 def get_one_instagram_user(venmo_user, targets, save=True):
@@ -217,11 +227,14 @@ def get_one_instagram_user(venmo_user, targets, save=True):
     )
 
     ratios = []
+    matches = []
     for i, user in enumerate(instagram_results):
         print '%d/%d: Checking Instagram users following %s (%s) against Venmo target users' % (
             i+1, len(instagram_results), user.username, user.full_name
         )
-        ratios.append(friend_match_ratio(user, targets))
+        ratio, target_matches = friend_match_ratio(user, targets)
+        ratios.append(ratio)
+        matches.append(target_matches)
 
     print '------INSTAGRAM MATCHER RESULTS------'
     max_ratio = None
@@ -242,34 +255,46 @@ def get_one_instagram_user(venmo_user, targets, save=True):
         # print ratios
 
     if save and instagram_match:
-        saveUser(venmo_user, instagram_match)
+        print 'SAVING actor %s %s' % (venmo_user, instagram_match)
+        save_user_match(venmo_user, instagram_match)
+        for match in matches[max_index]:
+            print 'SAVING target %s' % match
+            save_user_match(match.get('venmo'), match.get('instagram'), user_type='target')
 
 
-def saveUser(target, instagram_results):
-    try:
-        target_firstname = target['firstname']
-        target_lastname = target['lastname']
-        target_id = target['id']
+def get_instagram_user_dict(user):
+    user_dict = {}
+    if hasattr(user, "username"):
+        user_dict["username"] = user.username
+    if hasattr(user, "id"):
+        user_dict["id"] = user.id
+    if hasattr(user, "full_name"):
+        user_dict["full_name"] = user.full_name
+    if hasattr(user, "profile_picture"):
+        user_dict["profile_picture"] = user.profile_picture
+    if hasattr(user, "bio"):
+        user_dict["bio"] = user.bio
+    if hasattr(user, "website"):
+        user_dict["website"] = user.website
+    return user_dict
 
-        venmo_user_tmp = {}
-        if target_id not in VENMO_IDS_SET:
-            VENMO_IDS_SET.add(target_id)
-            venmo_user_tmp["venmo_id"] = target_id
-            venmo_user_tmp["venmo_firstname"] = target_firstname
-            venmo_user_tmp["venmo_lastname"] = target_lastname
-            venmo_user_tmp["instagram_users"] = []
 
-            for result in instagram_results:
-                venmo_user_tmp["instagram_users"].append({"insta_fullname": result.full_name, "insta_id": result.id})
-            # if venmousers.find_one({"venmo_id":"venmo_id"}):
-            VENMO_INSTAGRAM_MATCHES.save(venmo_user_tmp)
-            venmo_user_tmp = {"venmo_id": "", "venmo_firstname": "", "venmo_lastname": "", "instagram_users": []}
-    except TypeError:
-        print "Found a TypeError"
+def save_user_match(venmo_user, instagram_user, user_type='actor'):
+    venmo_id = venmo_user['id']
+
+    if venmo_id not in VENMO_IDS_SET:
+            VENMO_IDS_SET.add(venmo_id)
+
+            VENMO_INSTAGRAM_MATCHES.save({
+                "_id":          venmo_id,
+                "venmo":        venmo_user,
+                "instagram":    get_instagram_user_dict(instagram_user),
+                "user_type":    user_type
+            })
 
 
 def main():
-    heavy_users = get_networked_users(TRANS_COLLECTION, limit=30)
+    heavy_users = get_networked_users(TRANS_COLLECTION, limit=30, populate=False)
     match_venmo_instagram(heavy_users)
 
 
