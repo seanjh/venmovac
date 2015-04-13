@@ -103,3 +103,4 @@ bower_components/
 
 secrets.py
 .ipynb_checkpoints/
+*.png
