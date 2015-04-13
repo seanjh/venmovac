@@ -323,8 +323,24 @@ def get_instagram_media():
 def get_venmo_instagram_matches():
     return VENMO_INSTAGRAM_MATCHES.find()
 
-def get_instagram_user_media(user):
-    pass
+
+def query(instagram_access_tokens, threshold=50, populate=False):
+    API_CYCLER = InstagramAPICycler(instagram_access_tokens)
+
+    heavy_users = get_networked_users(
+        TRANS_COLLECTION,
+        threshold=threshold,
+        populate=populate
+    )
+
+    if populate:
+        clear_previously_matched_users_cache()
+    else:
+        old_len = len(heavy_users)
+        heavy_users = filter_users_to_query(heavy_users)
+        print 'Filtered Venmo users to query from %d to %d' % (old_len, len(heavy_users))
+
+    match_venmo_instagram(heavy_users)
 
 
 def main():
@@ -343,22 +359,10 @@ def main():
     else:
         API_CYCLER = InstagramAPICycler([access_token])
 
-    heavy_users = get_networked_users(
-        TRANS_COLLECTION,
-        threshold=args.threshold,
-        populate=args.redo_venmo_heavies
-    )
-
-    if args.redo_venmo_heavies:
-        clear_previously_matched_users_cache()
+    if access_tokens:
+        query(access_tokens, args.threshold, args.redo_venmo_heavies)
     else:
-        old_len = len(heavy_users)
-        heavy_users = filter_users_to_query(heavy_users)
-        print 'Filtered Venmo users to query from %d to %d' % (old_len, len(heavy_users))
-
-    match_venmo_instagram(heavy_users)
-
-    get_instagram_media()
+        query([access_token], args.threshold, args.redo_venmo_heavies)
 
 
 if __name__ == '__main__':
