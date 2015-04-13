@@ -1,15 +1,11 @@
-var actor_id = "1497902";
+var user_id = '1668182';
 db.trans.aggregate([
-  {$match: {"actor.id": actor_id}},
   {$unwind: "$transactions"},
-  {$project: {
-    "actor.username": 1,
-    "actor.id": 1,
-    "transactions.target.username": 1,
-    "transactions.target.id": 1,
-    "transactions.message": 1,
-    "created_time": 1,
-    "updated_time": 1
-  }},
-  {$sort: {"created_time": -1}}
+  {$match: {
+    $or: [
+      {"actor.id": user_id},
+      {"transactions.target.id": user_id}
+    ]}
+  },
+  {$sort: {"created_time": 1}}
 ]);

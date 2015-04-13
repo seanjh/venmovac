@@ -100,3 +100,6 @@ bower_components/
 *.sublime*
 
 *.xml.gz*
+
+secrets.py
+.ipynb_checkpoints/

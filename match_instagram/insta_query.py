@@ -4,7 +4,16 @@ import argparse
 
 from instagram.client import InstagramAPI
 from instagram.bind import InstagramAPIError
-import pymongo
+
+from mongo_helper import (
+    CLIENT,
+    DB,
+    TRANS_COLLECTION,
+    USER_PAIRS_COLLECTION,
+    VENMO_INSTAGRAM_MATCHES,
+    VENMO_INSTAGRAM_CACHE
+)
+from instagram_helper import InstagramAPICycler, get_all_paginated_data
 
 parser = argparse.ArgumentParser()
 parser.add_argument('tokens',
@@ -16,62 +25,15 @@ parser.add_argument('-rv',
     dest='redo_venmo_heavies',
     help='Repopulate heavy Venmo users data from Venmo transactions'
 )
-parser.add_argument('-ri',
-    action='store_true',
-    dest='redo_instagram_matches',
-    help='Repopulate venmo_instagram matches collection from scratch (overwrites any existing matches)'
-)
-parser.add_argument('-t', '--targets',
-    dest='targets',
+parser.add_argument('-t', '--threshold',
+    dest='threshold',
     type=int,
-    default=30,
-    help='Threshold number of Venmo target users for heavy users'
+    default=50,
+    help='Threshold number of unique Venmo users transacted after which some user is considered a "heavy user" (default: 50)'
 )
 
-args = parser.parse_args()
 
-access_tokens = []
-access_token = None
-if args.tokens:
-    access_tokens = args.tokens
-    access_token = access_tokens[-1]
-else:
-    access_token = ""
-
-
-class InstagramAPICycler(object):
-    def __init__(self, tokens):
-        self._tokens = tokens
-        self._apis = {}
-        for i, token in enumerate(tokens):
-            self._apis[i] = {
-                "api_object": InstagramAPI(access_token=access_token),
-                "access_token": token,
-                "usage_count": 0
-            }
-        self._pos = 0
-
-    @property
-    def api(self):
-        the_api = self._apis[self._pos]
-        the_api["usage_count"] += 1
-        self._pos = (self._pos + 1) % len(self._tokens)
-        return the_api.get('api_object')
-
-
-if access_tokens:
-    API_CYCLER = InstagramAPICycler(access_tokens)
-else:
-    API_CYCLER = InstagramAPICycler([access_token])
-
-CLIENT = pymongo.MongoClient('localhost', 27017)
-DB = CLIENT['venmo']
-
-TRANS_COLLECTION = DB['trans']
-USER_PAIRS_COLLECTION = DB['user_pairs']
-VENMO_INSTAGRAM_MATCHES = DB['venmo_instagram']
-VENMO_INSTAGRAM_MATCHES.create_index("venmo_id")
-
+INSTAGRAM_QUERIED_SET = set()
 VENMO_IDS_SET = set()
 
 
@@ -105,14 +67,14 @@ def populate_user_pairs_collection(source_collection):
     print 'Completed aggregate query of trans collection. Completed in %f seconds.' % (time.time() - start)
 
 
-def get_networked_users(source_collection, limit=20, populate=True):
+def get_networked_users(source_collection, threshold, populate=True):
     if populate:
         populate_user_pairs_collection(source_collection)
 
-    print '------FINDING VENMO USERS WITH >%d TARGET USERS------' % limit
+    print '------FINDING VENMO USERS WITH >%d TARGET USERS------' % threshold
 
-    # Finds matches using an array index, so value to match is limit-1
-    targets_index_str = "targets.%d" % (limit - 1)
+    # Finds matches using an array index, so value to match is threshold-1
+    targets_index_str = "targets.%d" % (threshold - 1)
 
     pipeline = [
         {"$match": {targets_index_str: {"$exists": True }}},
@@ -160,36 +122,21 @@ def instagram_user_string(instagram_user):
     )
 
 
-def existing_venmo_instagram_matches(venmo_users):
-    print '------FINDING EXISTING VENMO INSTAGRAM USER MATCHES------'
+def checked_venmo_instagram_users():
+    print '\n------RETURNING PREVIOUSLY QUERIED VENMO INSTAGRAM USERS------'
 
     start = time.time()
 
-    venmo_ids = [int(user.get('id')) for user in venmo_users]
-
-    results = VENMO_INSTAGRAM_MATCHES.find({
-        "_id": {"$in": venmo_ids}
-    })
+    results = VENMO_INSTAGRAM_CACHE.find()
 
     print 'Completed finding existing venmo-instagram matches in %f seconds.' % (time.time() - start)
-    return [match.get('venmo') for match in results]
+    return [user_id.get('_id') for user_id in results]
 
 
 def instagram_users_query(firstname, lastname):
     query = firstname + " " + lastname
     user_ids = API_CYCLER.api.user_search(query, count=3)
     return user_ids
-
-
-def get_all_instagram_following(instagram_id):
-    following = []
-    tmp_follow, next_ = API_CYCLER.api.user_follows(instagram_id)
-    following.extend(tmp_follow)
-
-    while next_:
-        tmp_follow, next_ = API_CYCLER.api.user_follows(with_next_url=next_)
-        following.extend(tmp_follow)
-    return following
 
 
 def friend_match_ratio(instagram_user, targets):
@@ -199,9 +146,10 @@ def friend_match_ratio(instagram_user, targets):
     user_id = instagram_user.id
     if user_id:
         try:
-            following = get_all_instagram_following(user_id)
+            # following = get_all_instagram_following(user_id)
+            following = get_all_paginated_data(API_CYCLER.api, 'user_follows', user_id=user_id)
             for i, following_user in enumerate(following):
-                venmo_target_match = instagram_user_venmo_target(following_user, targets)
+                venmo_target_match = match_instagram_to_venmo_users(following_user, targets)
                 if venmo_target_match:
                     match_count += 1
                     matches.append({
@@ -213,7 +161,7 @@ def friend_match_ratio(instagram_user, targets):
                     pass
         except InstagramAPIError as e:
             if (e.status_code == 400):
-                print "\Instagram user %s -- %s is set to private." % (instagram_user.username, instagram_user.id)
+                print "ERROR: Instagram user %s -- %s is set to private." % (instagram_user.username, instagram_user.id)
             return -1.0, matches
 
     print '\tInstagram username %s (%s) matched %d Instagram followers to %d Venmo targets -- %0.3f%%' % (
@@ -226,7 +174,7 @@ def friend_match_ratio(instagram_user, targets):
         return 0.0, matches
 
 
-def instagram_user_venmo_target(instagram_user, venmo_users):
+def match_instagram_to_venmo_users(instagram_user, venmo_users):
     # Just grab 2 pieces of the Instagram full_name (split on whitespace)
     i_name_parts = instagram_user.full_name.lower().split(None, 2)
 
@@ -237,9 +185,10 @@ def instagram_user_venmo_target(instagram_user, venmo_users):
         v_firstname = v_user.get('firstname').lower()
         v_lastname = v_user.get('lastname').lower()
         if i_lastname and v_lastname == i_lastname and v_firstname == i_firstname:
-            print '\tTarget Venmo user %s (%s) matched following Instagram user %s (username=%s, id=%s)' % (
+            print '\tTarget Venmo user %s (%s, %s) matched following Instagram user %s (username=%s, id=%s)' % (
                 v_user.get('username'),
                 v_user.get('name'),
+                v_user.get('id'),
                 instagram_user.full_name,
                 instagram_user.username,
                 instagram_user.id
@@ -248,19 +197,21 @@ def instagram_user_venmo_target(instagram_user, venmo_users):
     return None
 
 
-def get_one_instagram_user(venmo_user, targets, save=True):
-    firstname = venmo_user['firstname']
-    lastname = venmo_user['lastname']
-    instagram_results = instagram_users_query(firstname, lastname)
-    if len(instagram_results) == 0:
-        return
+def cache_venmo_queried_user(venmo_user):
+    user_id = int(venmo_user['id'])
+    # print 'Queried Instagram set %s' % INSTAGRAM_QUERIED_SET
+    INSTAGRAM_QUERIED_SET.add(user_id)
+    VENMO_INSTAGRAM_CACHE.save({
+        "_id": user_id
+    })
 
-    print
-    print
-    print '------BEGINNING VENMO INSTAGRAM MATCHER------'
-    print 'Venmo user %s (%s) matched %d possible Instagram users: %s' % (
-        venmo_user['username'],
-        venmo_user['name'],
+
+def get_best_instagram_match(venmo_user, instagram_results, targets):
+    print '\n\n------BEGINNING VENMO INSTAGRAM MATCHER------'
+    print 'Venmo user %s (%s, %s) matched %d possible Instagram users: %s' % (
+        venmo_user.get('username'),
+        venmo_user.get('name'),
+        venmo_user.get('id'),
         len(instagram_results),
         [user.username for user in instagram_results]
     )
@@ -291,20 +242,32 @@ def get_one_instagram_user(venmo_user, targets, save=True):
         print '\tInstagram: %s (full_name=%s, id=%s)' % (instagram_match.username, instagram_match.full_name, instagram_match.id)
     else:
         print 'NO MATCH on Instagram for Venmo user %s (%s)' % (venmo_user['username'], venmo_user['name'])
-        # print ratios
 
-    if save and instagram_match:
-        # print 'SAVING actor %s %s' % (venmo_user, instagram_match)
-        save_user_match(venmo_user, instagram_match)
-        for match in matches[max_index]:
-            # print 'SAVING target %s' % match
-            save_user_match(
-                match.get('venmo'),
-                match.get('instagram'),
-                user_type='target',
-                actor_id=venmo_user.get('id')
+    return instagram_match, max_index, matches
 
+
+def get_one_instagram_user(venmo_user, targets, save=True):
+    venmo_user_id = venmo_user['id']
+    if int(venmo_user_id) not in INSTAGRAM_QUERIED_SET:
+        instagram_results = instagram_users_query(venmo_user['firstname'], venmo_user['lastname'])
+        cache_venmo_queried_user(venmo_user)
+
+        if len(instagram_results) > 0:
+            instagram_match, max_index, matches = get_best_instagram_match(
+                venmo_user,
+                instagram_results,
+                targets
             )
+
+            if save and instagram_match is not None:
+                save_user_match(venmo_user, instagram_match)
+                for match in matches[max_index]:
+                    save_user_match(
+                        match.get('venmo'),
+                        match.get('instagram'),
+                        user_type='target',
+                        actor_id=venmo_user.get('id')
+                    )
 
 
 def get_instagram_user_dict(user):
@@ -330,33 +293,72 @@ def save_user_match(venmo_user, instagram_user, user_type='actor', actor_id=None
         document["actor_id"] = actor_id
 
     if venmo_id not in VENMO_IDS_SET:
-            VENMO_IDS_SET.add(venmo_id)
-            VENMO_INSTAGRAM_MATCHES.save(document)
+        VENMO_IDS_SET.add(venmo_id)
+
+
+
+def filter_users_to_query(users):
+    filtered_users = []
+    old_user_ids = checked_venmo_instagram_users()
+    for user in users:
+        try:
+            user_id = int(user.get('_id').get('id'))
+            if user_id not in old_user_ids:
+                filtered_users.append(user)
+        except TypeError as e:
+            print e
+            continue
+
+    return filtered_users
+
+
+def clear_previously_matched_users_cache():
+    VENMO_INSTAGRAM_CACHE.drop()
+
+
+def get_instagram_media():
+    user_matches = get_venmo_instagram_matches()
+
+
+def get_venmo_instagram_matches():
+    return VENMO_INSTAGRAM_MATCHES.find()
+
+def get_instagram_user_media(user):
+    pass
 
 
 def main():
+    args = parser.parse_args()
+
+    access_tokens = []
+    access_token = None
+    if args.tokens:
+        access_tokens = args.tokens
+        access_token = access_tokens[-1]
+    else:
+        access_token = ""
+
+    if access_tokens:
+        API_CYCLER = InstagramAPICycler(access_tokens)
+    else:
+        API_CYCLER = InstagramAPICycler([access_token])
 
     heavy_users = get_networked_users(
         TRANS_COLLECTION,
-        limit=args.targets,
+        threshold=args.threshold,
         populate=args.redo_venmo_heavies
     )
 
-    if not args.redo_instagram_matches:
-        filtered_heavy_users = []
-        existing_matched_users = existing_venmo_instagram_matches(
-            [user.get('_id') for user in heavy_users]
-        )
-        existing_matched_venmo_ids = [user.get('id') for user in existing_matched_users]
-
-        for doc in heavy_users:
-            heavy_user = doc.get('_id')
-            if heavy_user.get('id') not in existing_matched_venmo_ids:
-                filtered_heavy_users.append(doc)
-
-        heavy_users = filtered_heavy_users
+    if args.redo_venmo_heavies:
+        clear_previously_matched_users_cache()
+    else:
+        old_len = len(heavy_users)
+        heavy_users = filter_users_to_query(heavy_users)
+        print 'Filtered Venmo users to query from %d to %d' % (old_len, len(heavy_users))
 
     match_venmo_instagram(heavy_users)
+
+    get_instagram_media()
 
 
 if __name__ == '__main__':
