@@ -28,4 +28,4 @@ Given these Venmo users, Instagram users are queried using the full name the hea
 The VenmoTransAndInstagram IPython notebook compares the activity of a paired Instagram and Venmo user across the 2 services over time.
 
 ### Instructions
-ipython notebook VenmoTransAndInstagram.ipynb
+    ipython notebook VenmoTransAndInstagram.ipynb
