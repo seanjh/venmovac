@@ -21,24 +21,18 @@ class InstagramAPICycler(object):
         self._pos = (self._pos + 1) % len(self._tokens)
         return the_api.get('api_object')
 
-# def get_all_instagram_following(instagram_id):
-#     following = []
-#     tmp_follow, next_ = API_CYCLER.api.user_follows(instagram_id)
-#     following.extend(tmp_follow)
+    def __str__(self):
+        return 'InstagramAPICycler() %d tokens' % len(self._tokens)
 
-#     while next_:
-#         tmp_follow, next_ = API_CYCLER.api.user_follows(with_next_url=next_)
-#         following.extend(tmp_follow)
-#     return following
 
-def get_all_paginated_data(api_obj, func_str, **kwargs):
+def get_all_paginated_data(api_obj, func_str, *args, **kwargs):
     try:
         func = getattr(api_obj, func_str)
     except (AttributeError, TypeError) as e:
         raise InstagramAPIError('%s is not a valid InstagramAPI method' % func_str)
 
     result = []
-    partial, next_ = func(kwargs)
+    partial, next_ = func(*args, **kwargs)
     if partial:
         result.extend(partial)
 
