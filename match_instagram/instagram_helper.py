@@ -32,13 +32,9 @@ def get_all_paginated_data(api_obj, func_str, *args, **kwargs):
         raise InstagramAPIError('%s is not a valid InstagramAPI method' % func_str)
 
     result = []
-    try:
-        partial, next_ = func(*args, **kwargs)
-        if partial:
-            result.extend(partial)
-    except InstagramAPIError as e:
-        print e
-        return result
+    partial, next_ = func(*args, **kwargs)
+    if partial:
+        result.extend(partial)
 
     while next_:
         partial, next_ = func(with_next_url=next_)
