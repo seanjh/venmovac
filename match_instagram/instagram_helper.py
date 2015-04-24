@@ -42,3 +42,13 @@ def get_all_paginated_data(api_obj, func_str, *args, **kwargs):
             result.extend(partial)
 
     return result
+
+
+def instagram_media_to_dict(media_obj):
+    media_dict = {}
+    [
+        media_dict.setdefault(attr, getattr(media_obj, attr)) for
+        attr in dir(media_obj) if not attr.startswith('__') and
+        not callable(getattr(media_obj, attr))
+    ]
+    return media_dict
