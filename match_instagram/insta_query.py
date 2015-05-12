@@ -34,6 +34,7 @@ parser.add_argument('-t', '--threshold',
 
 INSTAGRAM_QUERIED_SET = set()
 VENMO_IDS_SET = set()
+SLEEP_SECONDS = 60*60
 
 
 def match_venmo_instagram(api_cycler, user_pairs):
@@ -63,11 +64,12 @@ def populate_user_pairs_collection(source_collection):
     start = time.time()
 
     result = source_collection.aggregate(pipeline, allowDiskUse=True)
+    result.close()
     print 'Completed aggregate query of trans collection. Completed in %f seconds.' % (time.time() - start)
 
 
-def get_networked_users(source_collection, threshold, populate=True):
-    if populate:
+def get_networked_users(source_collection, threshold, repopulate=True):
+    if repopulate:
         populate_user_pairs_collection(source_collection)
 
     print '------FINDING VENMO USERS WITH >%d TARGET USERS------' % threshold
@@ -86,7 +88,7 @@ def get_networked_users(source_collection, threshold, populate=True):
     ]
 
     start = time.time()
-    cursor = USER_PAIRS_COLLECTION.aggregate(pipeline)
+    cursor = USER_PAIRS_COLLECTION.aggregate(pipeline, allowDiskUse=True)
     print 'Completed aggregate query of user_pairs collection. Completed in %f seconds.' % (time.time() - start)
 
     print
@@ -99,6 +101,7 @@ def get_networked_users(source_collection, threshold, populate=True):
                 len(pairs.get('targets')) if pairs.get('targets') else -1
             )
             heavy_users.append(pairs)
+    cursor.close()
 
     return heavy_users
 
@@ -134,8 +137,14 @@ def checked_venmo_instagram_users():
 
 def instagram_users_query(api_cycler, firstname, lastname):
     query = firstname + " " + lastname
-    user_ids = api_cycler.api.user_search(query, count=3)
-    return user_ids
+    try:
+        user_ids = api_cycler.api.user_search(query, count=3)
+        return user_ids
+    except InstagramAPIError as e:
+        if (e.status_code == 429):
+            print e
+            print 'Sleeping %s seconds' % '{:,}'.format(SLEEP_SECONDS)
+            time.sleep(SLEEP_SECONDS)
 
 
 def friend_match_ratio(api_cycler, instagram_user, targets):
@@ -246,10 +255,17 @@ def get_best_instagram_match(api_cycler, venmo_user, instagram_results, targets)
 def get_one_instagram_user(api_cycler, venmo_user, targets, save=True):
     venmo_user_id = venmo_user['id']
     if int(venmo_user_id) not in INSTAGRAM_QUERIED_SET:
-        instagram_results = instagram_users_query(api_cycler, venmo_user['firstname'], venmo_user['lastname'])
+        try:
+            instagram_results = instagram_users_query(
+                api_cycler, venmo_user['firstname'],
+                venmo_user['lastname']
+            )
+        except InstagramClientError as e:
+            print e
+            instagram_results = None
         cache_venmo_queried_user(venmo_user)
 
-        if len(instagram_results) > 0:
+        if instagram_results is not None and len(instagram_results) > 0:
             instagram_match, max_index, matches = get_best_instagram_match(
                 api_cycler,
                 venmo_user,
@@ -322,16 +338,16 @@ def get_venmo_instagram_matches():
     return VENMO_INSTAGRAM_MATCHES.find()
 
 
-def query(instagram_access_tokens, threshold=50, populate=False):
+def query(instagram_access_tokens, threshold=50, repopulate=False):
     api_cycler = InstagramAPICycler(instagram_access_tokens)
 
     heavy_users = get_networked_users(
         TRANS_COLLECTION,
         threshold=threshold,
-        populate=populate
+        repopulate=repopulate
     )
 
-    if populate:
+    if repopulate:
         clear_previously_matched_users_cache()
     else:
         pass
