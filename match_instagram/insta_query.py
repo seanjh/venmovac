@@ -79,11 +79,15 @@ def get_networked_users(source_collection, threshold, repopulate=True):
 
     pipeline = [
         {"$match": {targets_index_str: {"$exists": True }}},
-        {"$unwind": "$targets"},
-        {"$group": {
-            "_id": "$_id",
-            "total_targets": {"$sum": 1}
+        # {"$unwind": "$targets"},
+        {"$project": {
+            "_id": 1,
+            "total_targets": {"$size": "$targets"}
         }},
+        # {"$group": {
+        #     "_id": "$_id",
+        #     "total_targets": {"$sum": 1}
+        # }},
         {"$sort": {"total_targets": -1}}
     ]
 

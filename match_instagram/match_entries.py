@@ -95,14 +95,14 @@ def venmo_user_trans(user_id):
 def get_instagram_api_data(instagram_user):
     instagram_id = instagram_user.get('id')
     media = get_all_paginated_data(API_CYCLER.api, 'user_recent_media', user_id=instagram_id, count=100)
-    logger.log(RESULT_LOG_LEVEL, '%d Media fetched for Instagram user %s (%s)' % (len(media), instagram_user.get('username'), instagram_user.get('id')))
+    logger.info('%d Media fetched for Instagram user %s (%s)' % (len(media), instagram_user.get('username'), instagram_user.get('id')))
     return media
 
 
 def get_venmo_api_data(venmo_user):
     venmo_id = venmo_user.get('id')
     venmo_trans = venmo_user_trans(venmo_id)
-    logger.log(RESULT_LOG_LEVEL, '%d Transactions fetched for Venmo user %s (%s)' % (len(venmo_trans), venmo_user.get('username'), venmo_user.get('id')))
+    logger.info('%d Transactions fetched for Venmo user %s (%s)' % (len(venmo_trans), venmo_user.get('username'), venmo_user.get('id')))
     return venmo_trans
 
 
@@ -221,8 +221,17 @@ def venmo_instagram_matches(venmo_trans, instagram_media):
     #     break
 
 
+def fetch_attr(media, media_dict, attr_str):
+    if hasattr(media, attr_str):
+        media_dict[attr_str] = getattr(media, attr_str)
+
+
 def instagram_json(media):
-    json.dumps(media.__dict__, sort_keys=True, indent=4)
+    result = {}
+    keys = ['link', 'created_time', 'images', 'users_in_photo', 'caption', 'id', 'user']
+    for key in keys:
+        fetch_attr(media, result, key)
+    return result
 
 
 def main(tokens, user_threshold, repopulate=False, rematch=False):
@@ -239,18 +248,15 @@ def main(tokens, user_threshold, repopulate=False, rematch=False):
         venmo_user = user_pair.get('venmo')
         try:
             venmo_trans, instagram_media = get_api_data(venmo_user, instagram_user)
-            logger.log(RESULT_LOG_LEVEL, 'Checking for matching Venmo and Instragram updates for user %s/%s' % (venmo_user.get('username'), instagram_user.get('username')))
+            logger.info('Checking for matching Venmo and Instragram updates for user %s/%s' % (venmo_user.get('username'), instagram_user.get('username')))
             update_matches = []
             if venmo_trans and instagram_media:
                 for va, ia in venmo_instagram_matches(venmo_trans, instagram_media):
-                    logger.log(RESULT_LOG_LEVEL, 'SUCCESSFUL MATCH')
-                    logger.log(RESULT_LOG_LEVEL, '\tVENMO:\t%s' % va)
-                    try:
-                        logger.log(RESULT_LOG_LEVEL, '\tINSTAGRAM:\t%s' % instagram_json(ia))
-                    except TypeError as e:
-                        logger.log(RESULT_LOG_LEVEL, e)
-                        for i in ia:
-                            logger.log(RESULT_LOG_LEVEL, '\tINSTAGRAM:\t%s' % instagram_json(ia))
+                    result_str = ['SUCCESSFUL MATCH']
+                    result_str.append('\tVENMO: %s\n' % va)
+                    for i_media in ia:
+                        result_str.append('\tINSTAGRAM: %s\n' % instagram_json(i_media))
+                    logger.log(RESULT_LOG_LEVEL, ''.join(result_str))
                     update_matches.append((va, ia))
                 else:
                     continue
